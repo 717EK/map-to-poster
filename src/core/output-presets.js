@@ -19,6 +19,7 @@ export const outputPresets = {
 	wallpaper: [
 		{ name: 'Desktop Full HD', width: 1920, height: 1080 },
 		{ name: 'Desktop 4K', width: 3840, height: 2160 },
+		{ name: 'Desktop 8K', width: 7680, height: 4320 },
 		{ name: 'Ultrawide 3440x1440', width: 3440, height: 1440 },
 		{ name: 'iPhone 15/14/13', width: 1170, height: 2532 },
 		{ name: 'iPhone 15 Pro Max', width: 1290, height: 2796 },

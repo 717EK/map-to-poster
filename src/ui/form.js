@@ -13,7 +13,7 @@ import {
 	updateRouteStyles,
 	updateRouteGeometry
 } from '../map/map-init.js';
-import { searchLocation, formatCoords } from '../map/geocoder.js';
+import { searchLocation, reverseGeocode, getSystemLocation, formatCoords } from '../map/geocoder.js';
 
 
 export function setupControls() {
@@ -585,12 +585,8 @@ export function setupControls() {
 	});
 
 	let lastSelectionAt = 0;
-	function selectResultElement(item) {
-		const lat = parseFloat(item.dataset.lat);
-		const lon = parseFloat(item.dataset.lon);
-		const name = item.dataset.name;
-		const country = item.dataset.country;
 
+	function applyLocation({ lat, lon, name, country }) {
 		updateState({
 			city: (name || '').toUpperCase(),
 			country: (country || '').toUpperCase(),
@@ -619,6 +615,15 @@ export function setupControls() {
 		lastSelectionAt = Date.now();
 	}
 
+	function selectResultElement(item) {
+		applyLocation({
+			lat: parseFloat(item.dataset.lat),
+			lon: parseFloat(item.dataset.lon),
+			name: item.dataset.name,
+			country: item.dataset.country
+		});
+	}
+
 	searchResults.addEventListener('pointerdown', (e) => {
 		const item = e.target.closest('[data-lat]');
 		if (item) {
@@ -632,6 +637,49 @@ export function setupControls() {
 		const item = e.target.closest('[data-lat]');
 		if (item) selectResultElement(item);
 	});
+
+	const useMyLocationBtn = document.getElementById('use-my-location-btn');
+	const useMyLocationLabel = document.getElementById('use-my-location-label');
+	const useMyLocationStatus = document.getElementById('use-my-location-status');
+
+	if (useMyLocationBtn) {
+		const setLocationStatus = (message, isError) => {
+			if (!useMyLocationStatus) return;
+			if (!message) {
+				useMyLocationStatus.classList.add('hidden');
+				useMyLocationStatus.textContent = '';
+				return;
+			}
+			useMyLocationStatus.textContent = message;
+			useMyLocationStatus.classList.remove('hidden', 'text-slate-400', 'text-red-500');
+			useMyLocationStatus.classList.add(isError ? 'text-red-500' : 'text-slate-400');
+		};
+
+		useMyLocationBtn.addEventListener('click', async () => {
+			useMyLocationBtn.disabled = true;
+			if (useMyLocationLabel) useMyLocationLabel.textContent = 'Locating...';
+			setLocationStatus('');
+
+			try {
+				const position = await getSystemLocation();
+				const place = await reverseGeocode(position.lat, position.lon);
+
+				applyLocation({
+					lat: position.lat,
+					lon: position.lon,
+					name: (place && place.name) || 'MY LOCATION',
+					country: (place && place.country) || ''
+				});
+
+				setLocationStatus(place && place.name ? `Located: ${place.name}` : 'Location set from coordinates.', false);
+			} catch (err) {
+				setLocationStatus((err && err.message) || 'Could not get your location.', true);
+			} finally {
+				useMyLocationBtn.disabled = false;
+				if (useMyLocationLabel) useMyLocationLabel.textContent = 'Use My Location';
+			}
+		});
+	}
 
 	latInput.addEventListener('change', (e) => {
 		const lat = parseFloat(e.target.value);
