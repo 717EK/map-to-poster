@@ -14,6 +14,7 @@ import {
 	updateRouteGeometry
 } from '../map/map-init.js';
 import { searchLocation, reverseGeocode, getSystemLocation, formatCoords } from '../map/geocoder.js';
+import { isGoogleAvailable, searchLocationGoogle, resolveGooglePlace } from '../map/google-places.js';
 
 
 export function setupControls() {
@@ -28,7 +29,13 @@ export function setupControls() {
 	const countryFontSelect = document.getElementById('country-font-select');
 	const coordsFontSelect = document.getElementById('coords-font-select');
 	const zoomSlider = document.getElementById('zoom-slider');
-	const zoomValue = document.getElementById('zoom-value');
+	const zoomInput = document.getElementById('zoom-input');
+
+	const ZOOM_MIN = 1;
+	const ZOOM_MAX = 18;
+
+	// Trims 12.0 back to 12 while keeping 12.4 intact.
+	const formatZoom = (zoom) => String(Number(Number(zoom).toFixed(2)));
 
 	const modeTile = document.getElementById('mode-tile');
 	const modeArtistic = document.getElementById('mode-artistic');
@@ -536,6 +543,54 @@ export function setupControls() {
 	let currentSearchController = null;
 	let searchRequestId = 0;
 
+	const providerToggle = document.getElementById('geocode-provider-toggle');
+	const providerButtons = document.querySelectorAll('.geocode-provider-btn');
+
+	function activeProvider() {
+		return (isGoogleAvailable() && state.geocodeProvider === 'google') ? 'google' : 'osm';
+	}
+
+	function renderProviderToggle() {
+		if (!providerToggle) return;
+
+		if (!isGoogleAvailable()) {
+			providerToggle.classList.add('hidden');
+			return;
+		}
+
+		providerToggle.classList.remove('hidden');
+		providerToggle.classList.add('flex');
+
+		const current = activeProvider();
+		providerButtons.forEach(btn => {
+			const isActive = btn.dataset.provider === current;
+			btn.classList.toggle('bg-white', isActive);
+			btn.classList.toggle('text-accent', isActive);
+			btn.classList.toggle('shadow-sm', isActive);
+			btn.classList.toggle('text-slate-400', !isActive);
+		});
+	}
+
+	providerButtons.forEach(btn => {
+		btn.addEventListener('click', () => {
+			updateState({ geocodeProvider: btn.dataset.provider });
+			renderProviderToggle();
+			if (searchResults) searchResults.classList.add('hidden');
+		});
+	});
+
+	renderProviderToggle();
+
+	// Google's Places endpoints are not CORS-enabled, so this goes through the
+	// Maps JS API instead of fetch(); it has no AbortSignal, and staleness is
+	// handled by searchRequestId below.
+	async function runSearch(query, controller) {
+		if (activeProvider() === 'google') {
+			return await searchLocationGoogle(query, { limit: 15 });
+		}
+		return await searchLocation(query, { limit: 15, signal: controller.signal });
+	}
+
 	searchInput.addEventListener('input', (e) => {
 		clearTimeout(searchTimeout);
 		const query = e.target.value;
@@ -560,7 +615,7 @@ export function setupControls() {
 
 			let results = [];
 			try {
-				results = await searchLocation(query, { limit: 15, signal: controller.signal });
+				results = await runSearch(query, controller);
 			} catch (err) {
 				results = [];
 			}
@@ -571,7 +626,7 @@ export function setupControls() {
 
 			if (results && results.length > 0) {
 				searchResults.innerHTML = results.map(r => `
-		  <div class="px-4 py-2 hover:bg-gray-100 cursor-pointer text-sm" data-lat="${r.lat}" data-lon="${r.lon}" data-name="${r.shortName}" data-country="${r.country || ''}">
+		  <div class="px-4 py-2 hover:bg-gray-100 cursor-pointer text-sm" data-lat="${r.lat}" data-lon="${r.lon}" data-place-id="${r.placeId || ''}" data-name="${r.shortName}" data-country="${r.country || ''}">
 			${r.name}
 		  </div>
 		`).join('');
@@ -615,7 +670,33 @@ export function setupControls() {
 		lastSelectionAt = Date.now();
 	}
 
-	function selectResultElement(item) {
+	async function selectResultElement(item) {
+		const placeId = item.dataset.placeId;
+
+		// Google predictions carry no coordinates; resolve them on selection.
+		if (placeId) {
+			lastSelectionAt = Date.now();
+			searchResults.classList.add('hidden');
+			if (searchLoading) searchLoading.classList.remove('hidden');
+
+			try {
+				const place = await resolveGooglePlace(placeId);
+				if (place) {
+					applyLocation({
+						lat: place.lat,
+						lon: place.lon,
+						name: place.name || item.dataset.name,
+						country: place.country || item.dataset.country
+					});
+				}
+			} catch (err) {
+				console.error('Google place lookup failed:', err);
+			} finally {
+				if (searchLoading) searchLoading.classList.add('hidden');
+			}
+			return;
+		}
+
 		applyLocation({
 			lat: parseFloat(item.dataset.lat),
 			lon: parseFloat(item.dataset.lon),
@@ -773,10 +854,35 @@ export function setupControls() {
 	});
 
 	zoomSlider.addEventListener('input', (e) => {
-		const zoom = parseInt(e.target.value);
+		const zoom = parseFloat(e.target.value);
+		if (!Number.isFinite(zoom)) return;
 		updateState({ zoom });
-		updateMapPosition(undefined, undefined, zoom);
+		updateMapPosition(undefined, undefined, zoom, { animate: false });
+		if (zoomInput) zoomInput.value = formatZoom(zoom);
 	});
+
+	if (zoomInput) {
+		const commitZoomInput = (e) => {
+			const raw = parseFloat(e.target.value);
+			if (!Number.isFinite(raw)) {
+				e.target.value = formatZoom(state.zoom);
+				return;
+			}
+			const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, raw));
+			updateState({ zoom });
+			updateMapPosition(undefined, undefined, zoom, { animate: false });
+			zoomSlider.value = zoom;
+			e.target.value = formatZoom(zoom);
+		};
+
+		zoomInput.addEventListener('change', commitZoomInput);
+		zoomInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				commitZoomInput(e);
+				e.target.blur();
+			}
+		});
+	}
 
 	modeTile.addEventListener('click', () => {
 		updateState({ renderMode: 'tile' });
@@ -1079,7 +1185,9 @@ export function setupControls() {
 		latInput.value = currentState.lat.toFixed(6);
 		lonInput.value = currentState.lon.toFixed(6);
 		zoomSlider.value = currentState.zoom;
-		zoomValue.textContent = currentState.zoom;
+		if (zoomInput && document.activeElement !== zoomInput) {
+			zoomInput.value = formatZoom(currentState.zoom);
+		}
 
 		if (currentState.renderMode === 'tile') {
 			modeTile.className = 'flex-1 py-2 text-xs font-bold rounded-lg bg-accent text-white shadow-sm';

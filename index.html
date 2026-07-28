@@ -82,7 +82,13 @@
 
 				<div class="space-y-3">
 					<div class="relative group">
-						<span class="label-sm">Search City</span>
+						<div class="flex items-center justify-between">
+							<span class="label-sm">Search City</span>
+							<div id="geocode-provider-toggle" class="hidden items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
+								<button type="button" data-provider="osm" class="geocode-provider-btn px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all">OSM</button>
+								<button type="button" data-provider="google" class="geocode-provider-btn px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all">Google</button>
+							</div>
+						</div>
 						<div class="relative">
 							<input type="text" id="search-input" placeholder="Search world cities..." class="input-field pl-10 pr-10" />
 							<svg class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -295,9 +301,9 @@
 					<div>
 						<div class="flex justify-between items-center mb-2">
 							<span class="label-sm mb-0">Perspective Zoom</span>
-							<span id="zoom-value" class="text-xs font-bold text-accent bg-accent-light px-2 py-0.5 rounded-full">12</span>
+							<input type="number" id="zoom-input" min="1" max="18" step="0.1" class="w-16 text-xs font-bold text-accent bg-accent-light px-2 py-0.5 rounded-full text-center border-0 focus:outline-none focus:ring-1 focus:ring-accent" />
 						</div>
-						<input type="range" id="zoom-slider" min="1" max="18" step="1" class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-accent" />
+						<input type="range" id="zoom-slider" min="1" max="18" step="0.1" class="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-accent" />
 					</div>
 
 					<div id="overlay-controls" class="mt-4 space-y-4">

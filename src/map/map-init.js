@@ -24,7 +24,10 @@ export function initMap(containerId, initialCenter, initialZoom, initialTileUrl)
 		zoomControl: false,
 		attributionControl: false,
 		scrollWheelZoom: 'center',
-		touchZoom: 'center'
+		touchZoom: 'center',
+		// zoomSnap defaults to 1, which rounds fractional zoom levels away.
+		zoomSnap: 0,
+		zoomDelta: 0.25
 	}).setView(initialCenter, initialZoom);
 
 	tileLayer = L.tileLayer(initialTileUrl, {

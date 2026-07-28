@@ -13,7 +13,97 @@ function project(lat, lon, scale) {
 	};
 }
 
-const IOS_MAX_CANVAS_PIXELS = 16777216;
+// Safari and iOS cap a canvas at 2^24 total pixels. Desktop Chrome, Edge and
+// Firefox go far higher, so applying the Safari cap everywhere silently
+// downscaled large exports (8K came out at 5461x3071 instead of 7680x4320).
+const SAFARI_MAX_CANVAS_PIXELS = 16777216;
+const DESKTOP_MAX_CANVAS_PIXELS = 268435456;
+const MAX_CANVAS_DIMENSION = 16384;
+
+function isSafariLike() {
+	if (typeof navigator === 'undefined') return false;
+	const ua = navigator.userAgent || '';
+	const isIOS = /iP(hone|ad|od)/.test(ua) || (/Macintosh/.test(ua) && typeof document !== 'undefined' && 'ontouchend' in document);
+	const isSafari = /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Android/.test(ua);
+	return isIOS || isSafari;
+}
+
+function maxCanvasPixels() {
+	return isSafariLike() ? SAFARI_MAX_CANVAS_PIXELS : DESKTOP_MAX_CANVAS_PIXELS;
+}
+
+// Shrinks a requested export size to something the browser can actually
+// allocate, preserving aspect ratio. Returns the original size untouched when
+// it already fits.
+function fitToCanvasLimits(width, height) {
+	let w = Math.max(1, Math.round(width));
+	let h = Math.max(1, Math.round(height));
+
+	const dimensionRatio = Math.min(1, MAX_CANVAS_DIMENSION / Math.max(w, h));
+	if (dimensionRatio < 1) {
+		w = Math.max(1, Math.floor(w * dimensionRatio));
+		h = Math.max(1, Math.floor(h * dimensionRatio));
+	}
+
+	const limit = maxCanvasPixels();
+	if (w * h > limit) {
+		const ratio = Math.sqrt(limit / (w * h));
+		w = Math.max(1, Math.floor(w * ratio));
+		h = Math.max(1, Math.floor(h * ratio));
+	}
+
+	if (w !== Math.round(width) || h !== Math.round(height)) {
+		console.warn(`[map-to-poster] Export downscaled from ${Math.round(width)}x${Math.round(height)} to ${w}x${h} to stay within this browser's canvas limits.`);
+	}
+
+	return { width: w, height: h };
+}
+
+// Confirms the browser really allocated the canvas rather than silently
+// handing back something unusable at very large sizes.
+function canvasIsUsable(canvas) {
+	try {
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return false;
+		const x = canvas.width - 1;
+		const y = canvas.height - 1;
+		ctx.save();
+		ctx.fillStyle = '#ffffff';
+		ctx.fillRect(x, y, 1, 1);
+		const data = ctx.getImageData(x, y, 1, 1).data;
+		ctx.clearRect(x, y, 1, 1);
+		ctx.restore();
+		return data[3] !== 0;
+	} catch (e) {
+		return false;
+	}
+}
+
+// Allocates at the requested size when possible, stepping down only if the
+// browser cannot handle it.
+function createExportCanvas(width, height) {
+	const first = fitToCanvasLimits(width, height);
+
+	const canvas = document.createElement('canvas');
+	canvas.width = first.width;
+	canvas.height = first.height;
+
+	if (canvas.width === first.width && canvas.height === first.height && canvasIsUsable(canvas)) {
+		return canvas;
+	}
+
+	console.warn('[map-to-poster] Browser rejected the full-size export canvas; falling back to a smaller one.');
+
+	const fallback = fitToCanvasLimits(
+		Math.floor(first.width * Math.sqrt(SAFARI_MAX_CANVAS_PIXELS / (first.width * first.height))),
+		Math.floor(first.height * Math.sqrt(SAFARI_MAX_CANVAS_PIXELS / (first.width * first.height)))
+	);
+
+	canvas.width = fallback.width;
+	canvas.height = fallback.height;
+	return canvas;
+}
+
 const TEXT_SCALE_REFERENCE = 1080;
 const OVERLAY_SIZE_MULTIPLIER = {
 	small: 0.75,
@@ -144,17 +234,9 @@ async function captureMapSnapshot() {
 	const effectiveWidth = state.width - (2 * matWidth);
 	const effectiveHeight = state.height - (2 * matWidth);
 
-	let canvasWidth = Math.max(1, effectiveWidth);
-	let canvasHeight = Math.max(1, effectiveHeight);
-	if (canvasWidth * canvasHeight > IOS_MAX_CANVAS_PIXELS) {
-		const ratio = Math.sqrt(IOS_MAX_CANVAS_PIXELS / (canvasWidth * canvasHeight));
-		canvasWidth = Math.floor(canvasWidth * ratio);
-		canvasHeight = Math.floor(canvasHeight * ratio);
-	}
-
-	const canvas = document.createElement('canvas');
-	canvas.width = canvasWidth;
-	canvas.height = canvasHeight;
+	const canvas = createExportCanvas(Math.max(1, effectiveWidth), Math.max(1, effectiveHeight));
+	const canvasWidth = canvas.width;
+	const canvasHeight = canvas.height;
 	const ctx = canvas.getContext('2d');
 
 	if (isArtistic) {
@@ -436,13 +518,9 @@ export async function exportToPNG(element, filename, statusElement, options = {}
 		const logicalContainerWidth = posterContainerEl ? (posterContainerEl.offsetWidth || targetWidth) : targetWidth;
 		const logicalContainerHeight = posterContainerEl ? (posterContainerEl.offsetHeight || targetHeight) : targetHeight;
 
-		let outputW = targetWidth;
-		let outputH = targetHeight;
-		if (outputW * outputH > IOS_MAX_CANVAS_PIXELS) {
-			const ratio = Math.sqrt(IOS_MAX_CANVAS_PIXELS / (outputW * outputH));
-			outputW = Math.floor(outputW * ratio);
-			outputH = Math.floor(outputH * ratio);
-		}
+		const fitted = fitToCanvasLimits(targetWidth, targetHeight);
+		const outputW = fitted.width;
+		const outputH = fitted.height;
 		const scale = logicalContainerWidth > 0 ? (outputW / logicalContainerWidth) : 1;
 
 		const overlayCanvas = await html2canvas(element, {
